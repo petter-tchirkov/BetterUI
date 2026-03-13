@@ -1,0 +1,847 @@
+--[[
+File: Modules/Inventory/Keybinds/InventoryKeybinds.lua
+Purpose: Defines the main keybind strip for the BetterUI inventory.
+         Contains all controller button mappings (X, Y, Sticks, etc.)
+Author: BetterUI Team
+Last Modified: 2026-01-28
+]]
+
+--------------------------------------------------------------------------------
+-- CONSTANTS
+--------------------------------------------------------------------------------
+
+-- Action mode constants (must match other files)
+-- Replaced by BETTERUI.Inventory.CONST equivalents
+
+--------------------------------------------------------------------------------
+-- HELPER FUNCTIONS
+--------------------------------------------------------------------------------
+
+local GetItemLinkItemType = GetItemLinkItemType
+local GetItemLinkSetInfo = GetItemLinkSetInfo
+local GetItemLinkEnchantInfo = GetItemLinkEnchantInfo
+local IsItemBound = IsItemBound
+local ZO_InventorySlot_SetType = ZO_InventorySlot_SetType
+local GetItemFont = BETTERUI.Inventory.CONST.GetItemFont
+local WouldEquipmentBeHidden = WouldEquipmentBeHidden
+local FindActionSlotMatchingItem = FindActionSlotMatchingItem
+local FindActionSlotMatchingSimpleAction = FindActionSlotMatchingSimpleAction
+local ACTION_TYPE_QUEST_ITEM = ACTION_TYPE_QUEST_ITEM
+local KEYBINDS = BETTERUI.CIM.CONST and BETTERUI.CIM.CONST.KEYBINDS or {}
+local GetItemActorCategory = GetItemActorCategory
+local CanItemBeMarkedAsJunk = CanItemBeMarkedAsJunk
+local IsItemPlayerLocked = IsItemPlayerLocked
+local IsItemJunk = IsItemJunk
+
+--[[
+Function: IsQuickslottable
+Description: Checks if an item can be assigned to a quickslot.
+Rationale: Used by X-button keybind to show "Assign Quickslot" vs other actions.
+Mechanism: Checks filter types, hotbar validity, and existing assignments.
+param: sd (table) - Slot data of the item to check
+return: boolean - True if item can be quickslotted
+]]
+local function IsQuickslottable(sd)
+    if not sd or not sd.bagId or not sd.slotIndex then
+        return false
+    end
+    local bag, slot = sd.bagId, sd.slotIndex
+    -- Already assigned is always eligible
+    if FindActionSlotMatchingItem and FindActionSlotMatchingItem(bag, slot, HOTBAR_CATEGORY_QUICKSLOT_WHEEL) then
+        return true
+    end
+    -- Accept both standard quickslot items and quest quickslot items
+    -- (matches ESO's native ZO_InventorySlot_CanQuickslotItem eligibility)
+    if ZO_InventoryUtils_DoesNewItemMatchFilterType then
+        if ZO_InventoryUtils_DoesNewItemMatchFilterType(sd, ITEMFILTERTYPE_QUICKSLOT) then
+            return true
+        end
+        if ITEMFILTERTYPE_QUEST_QUICKSLOT
+            and ZO_InventoryUtils_DoesNewItemMatchFilterType(sd, ITEMFILTERTYPE_QUEST_QUICKSLOT)
+        then
+            return true
+        end
+    end
+
+    -- Engine validation as a secondary check
+    if IsValidItemForSlot and IsValidItemForSlot(bag, slot, HOTBAR_CATEGORY_QUICKSLOT_WHEEL) then
+        return true
+    end
+    return false
+end
+
+--[[
+Function: GetXButtonActionContext
+Description: Computes the action context for the X-button keybind.
+Rationale: Eliminates redundant API calls by computing isQuickslottable, isQuestItem,
+           and filterType once and reusing across name/visible/callback.
+Mechanism: Retrieves target data and computes all relevant properties.
+param: self (table) - The Inventory class instance.
+return: table|nil - {target, isQuestItem, isQuickslottable, filterType, isEquipment, isUsableQuest}
+]]
+local function GetXButtonActionContext(self)
+    if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+        return nil
+    end
+    local target = self.itemList.selectedData
+    if not target then return nil end
+
+    local filterType = nil
+    if target.bagId and target.slotIndex then
+        filterType = GetItemFilterTypeInfo(target.bagId, target.slotIndex)
+    end
+
+    local isQuestItem = ZO_InventoryUtils_DoesNewItemMatchFilterType
+        and ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST)
+        or false
+
+    local isEquipment = filterType == ITEMFILTERTYPE_WEAPONS
+        or filterType == ITEMFILTERTYPE_ARMOR
+        or filterType == ITEMFILTERTYPE_JEWELRY
+
+    return {
+        target = target,
+        isQuestItem = isQuestItem,
+        isQuickslottable = IsQuickslottable(target),
+        filterType = filterType,
+        isEquipment = isEquipment,
+        isUsableQuest = isQuestItem and target.meetsUsageRequirement or false,
+    }
+end
+
+--- Returns the active list that drives the Y-button actions dialog.
+--- @param self table Inventory instance
+--- @return table|nil list
+local function GetActionsTargetList(self)
+    if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+        return self.craftBagList
+    end
+    if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+        return self.itemList
+    end
+    return nil
+end
+
+--- Validates that the current actions target is in a stable selected state.
+--- Prevents ShowActions() while parametric lists are temporarily at selectedIndex 0
+--- during rapid refresh/abort transitions.
+--- @param self table Inventory instance
+--- @return boolean valid
+local function HasStableActionsTarget(self)
+    local targetList = GetActionsTargetList(self)
+    if not targetList then
+        return false
+    end
+
+    local targetData = BETTERUI.Inventory.Utils.SafeGetTargetData(targetList)
+    if not targetData then
+        return false
+    end
+
+    local innerList = targetList.list or (targetList.GetParametricList and targetList:GetParametricList()) or targetList
+    if not innerList then
+        return false
+    end
+
+    local selectedIndex = innerList.selectedIndex
+    if type(selectedIndex) ~= "number" or selectedIndex < 1 then
+        return false
+    end
+
+    local dataList = innerList.dataList
+    if dataList and selectedIndex > #dataList then
+        return false
+    end
+
+    return true
+end
+
+--------------------------------------------------------------------------------
+-- KEYBIND INITIALIZATION
+--------------------------------------------------------------------------------
+
+--[[
+Function: InitializeKeybindStrip
+Description: Initializes the main keybind strip for the inventory.
+Rationale: Defines all controller button mappings for inventory interactions.
+Mechanism: Creates keybind descriptors for X (quick action), Y (actions menu),
+           L-Stick (stack), R-Stick (switch bags), and Quaternary (clear search).
+References: Called by OnDeferredInitialize
+]]
+function BETTERUI.Inventory.Class:InitializeKeybindStrip()
+    -- Initialize multi-select manager if not already done
+    if not self.multiSelectManager then
+        self.multiSelectManager = BETTERUI.CIM.MultiSelectManager.Create(
+            self.itemList,
+            function(selectedCount)
+                self:OnSelectionCountChanged(selectedCount)
+            end
+        )
+        -- Apply shared mixin with Inventory-specific hooks
+        BETTERUI.CIM.MultiSelectMixin.Apply(self, {
+            getList = function(s) return s.itemList end,
+            refreshList = function(s) s:RefreshItemList() end,
+            isSceneShowing = function()
+                return BETTERUI.CIM.Utils.IsInventorySceneShowing()
+            end,
+            getSceneExitLabel = function()
+                return GetString(SI_BETTERUI_SCENE_INVENTORY)
+            end,
+            refreshKeybinds = function(s)
+                if s.isInHeaderSortMode then
+                    return
+                end
+
+                -- During batch execution, the Inventory refresh guard intentionally
+                -- skips full keybind rebuilds. We still need immediate label updates
+                -- (e.g., Y -> Abort Action), so update the active group directly.
+                if s:IsBatchProcessing() then
+                    if s.mainKeybindStripDescriptor then
+                        KEYBIND_STRIP:UpdateKeybindButtonGroup(s.mainKeybindStripDescriptor)
+                    end
+                    return
+                end
+
+                s:RefreshKeybinds()
+            end,
+        })
+    end
+
+    self.mainKeybindStripDescriptor = {
+        -- Primary (A) for Equip/Use/Retrieve actions
+        -- Multi-Select entry is now via Y-Hold (QUINARY) button
+        {
+            alignment = KEYBIND_STRIP_ALIGN_LEFT,
+            name = function()
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE
+                    and self.actionMode ~= BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    return ""
+                end
+
+                -- Use SafeGetTargetData for consistent access (handles inner list structure)
+                local target
+                if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    target = BETTERUI.Inventory.Utils.SafeGetTargetData(self.craftBagList)
+                else
+                    target = BETTERUI.Inventory.Utils.SafeGetTargetData(self.itemList)
+                end
+
+                -- If in multi-select mode, show "Unselect" or "Select (count)"
+                -- Check inventory multi-select manager
+                if self.multiSelectManager and self.multiSelectManager:IsActive() then
+                    -- Quest items cannot be selected in multi-select mode
+                    if target and ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) then
+                        return ""
+                    end
+                    if target and self.multiSelectManager:IsSelected(target) then
+                        return GetString(SI_BETTERUI_DESELECT_ITEM)
+                    else
+                        local count = self.multiSelectManager:GetSelectedCount()
+                        return zo_strformat(GetString(SI_BETTERUI_SELECT_WITH_COUNT), count)
+                    end
+                end
+                -- Check craftbag multi-select manager
+                if self.craftBagMultiSelectManager and self.craftBagMultiSelectManager:IsActive() then
+                    if target and self.craftBagMultiSelectManager:IsSelected(target) then
+                        return GetString(SI_BETTERUI_DESELECT_ITEM)
+                    else
+                        local count = self.craftBagMultiSelectManager:GetSelectedCount()
+                        return zo_strformat(GetString(SI_BETTERUI_SELECT_WITH_COUNT), count)
+                    end
+                end
+
+                -- Use itemActions for proper action name discovery (Equip/Unequip/Use/Retrieve/etc.)
+                local baseName
+                if self.itemActions and self.itemActions.actionName then
+                    baseName = self.itemActions.actionName
+                else
+                    -- Fallback logic if itemActions not ready or target not yet selected
+                    if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                        -- Craft Bag items always default to "Retrieve"
+                        baseName = GetString(SI_ITEM_ACTION_REMOVE_ITEMS_FROM_CRAFT_BAG)
+                    elseif target and target.bagId and target.slotIndex and IsEquipable(target.bagId, target.slotIndex) then
+                        baseName = GetString(SI_ITEM_ACTION_EQUIP)
+                    elseif target then
+                        baseName = GetString(SI_ITEM_ACTION_USE)
+                    else
+                        -- No target selected yet - show generic action
+                        baseName = GetString(SI_ITEM_ACTION_USE)
+                    end
+                end
+
+                return baseName
+            end,
+            keybind = KEYBINDS.PRIMARY or "UI_SHORTCUT_PRIMARY",
+            visible = function()
+                if self:IsBatchProcessing() then
+                    return false
+                end
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE
+                    and self.actionMode ~= BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    return false
+                end
+                -- Hide A-button when in multi-select and targeting a quest item
+                if self.multiSelectManager and self.multiSelectManager:IsActive() then
+                    local target = self.itemList and self.itemList.selectedData
+                    if target and ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) then
+                        return false
+                    end
+                end
+                -- FLICKER FIX: Hide button during action transition when actionName cleared
+                -- This prevents showing incorrect fallback text after equip/unequip
+                if self.itemActions and self.itemActions.slotActions and not self.itemActions.actionName then
+                    return false
+                end
+                -- Check itemActions visibility if available
+                if self.itemActions and self.itemActions.slotActions then
+                    return self.itemActions.slotActions:CheckPrimaryActionVisibility()
+                end
+                -- Fallback: visible if we have selected data (use SafeGetTargetData for consistency)
+                if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    return BETTERUI.Inventory.Utils.SafeGetTargetData(self.craftBagList) ~= nil
+                end
+                return BETTERUI.Inventory.Utils.SafeGetTargetData(self.itemList) ~= nil
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    return
+                end
+
+                -- Check craftbag multi-select first
+                if self.craftBagMultiSelectManager and self.craftBagMultiSelectManager:IsActive() then
+                    local target = BETTERUI.Inventory.Utils.SafeGetTargetData(self.craftBagList)
+                    if target then
+                        self.craftBagMultiSelectManager:ToggleSelection(target)
+                        self:RefreshCraftBagList()
+                    end
+                    return
+                end
+                -- Check inventory multi-select
+                if self.multiSelectManager and self.multiSelectManager:IsActive() then
+                    local target = self.itemList and self.itemList.selectedData
+                    if target then
+                        self.multiSelectManager:ToggleSelection(target)
+                        self:RefreshItemList()
+                    end
+                else
+                    -- FLICKER FIX: Save and clear stale action name BEFORE executing action
+                    -- This prevents fallback logic from showing incorrect text (e.g. "Use" instead of "Unequip")
+                    local actionName
+                    if self.itemActions then
+                        actionName = self.itemActions.actionName
+                        self.itemActions.actionName = nil
+                    end
+
+                    -- Use itemActions to execute the discovered primary action
+                    if self.itemActions and self.itemActions.slotActions then
+                        local slotActions = self.itemActions.slotActions
+                        if slotActions._betterui_primaryOverride then
+                            slotActions._betterui_primaryOverride()
+                        elseif actionName == GetString(SI_ITEM_ACTION_USE)
+                            or actionName == GetString(SI_ITEM_ACTION_SHOW_MAP)
+                            or actionName == GetString(SI_ITEM_ACTION_START_SKILL_RESPEC)
+                            or actionName == GetString(SI_ITEM_ACTION_START_ATTRIBUTE_RESPEC) then
+                            local target
+                            if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                                target = BETTERUI.Inventory.Utils.SafeGetTargetData(self.itemList)
+                            elseif self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                                target = BETTERUI.Inventory.Utils.SafeGetTargetData(self.craftBagList)
+                            end
+
+                            if target then
+                                local ds = target.dataSource or target
+                                local isQuestItem = ZO_InventoryUtils_DoesNewItemMatchFilterType and
+                                ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST)
+                                if isQuestItem and ds.toolIndex then
+                                    UseQuestTool(ds.questIndex, ds.toolIndex)
+                                elseif isQuestItem and ds.stepIndex and ds.conditionIndex then
+                                    UseQuestItem(ds.questIndex, ds.stepIndex, ds.conditionIndex)
+                                else
+                                    local bag, slot = ZO_Inventory_GetBagAndIndex(ds)
+                                    if bag and slot then
+                                        CallSecureProtected("UseItem", bag, slot)
+                                    end
+                                end
+                            end
+                        else
+                            slotActions:DoPrimaryAction()
+                        end
+                    else
+                        -- Fallback: direct equip/use if itemActions not available
+                        local target = self.itemList and self.itemList.selectedData
+                        if target and target.bagId and target.slotIndex then
+                            if IsEquipable(target.bagId, target.slotIndex) then
+                                local inventorySlot = target.dataSource and target or { dataSource = target }
+                                self:TryEquipItem(inventorySlot, false)
+                            else
+                                CallSecureProtected("UseItem", target.bagId, target.slotIndex)
+                            end
+                        end
+                    end
+                end
+            end,
+        },
+        --X Button for Quick Action
+        {
+            alignment = KEYBIND_STRIP_ALIGN_LEFT,
+            name = function()
+                local n = ""
+                if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    --bag mode
+                    local isQuestItem =
+                        ZO_InventoryUtils_DoesNewItemMatchFilterType(self.itemList.selectedData, ITEMFILTERTYPE_QUEST)
+                    local target = self.itemList.selectedData
+                    local ft = (target and target.bagId and target.slotIndex)
+                        and GetItemFilterTypeInfo(target.bagId, target.slotIndex)
+                        or nil
+                    if IsQuickslottable(target) then
+                        local hotbarCategory = HOTBAR_CATEGORY_QUICKSLOT_WHEEL
+                        local slotNum = nil
+                        if isQuestItem then
+                            local questItemId
+                            if target.toolIndex then
+                                questItemId = GetQuestToolQuestItemId(target.questIndex, target.toolIndex)
+                            else
+                                questItemId = GetQuestConditionQuestItemId(target.questIndex, target.stepIndex,
+                                    target.conditionIndex)
+                            end
+                            slotNum = FindActionSlotMatchingSimpleAction(ACTION_TYPE_QUEST_ITEM, questItemId,
+                                hotbarCategory)
+                        else
+                            slotNum = FindActionSlotMatchingItem(target.bagId, target.slotIndex, hotbarCategory)
+                        end
+                        if slotNum then
+                            -- Already slotted, label as "Unassign"
+                            n = GetString(SI_BETTERUI_INV_ACTION_QUICKSLOT_UNASSIGN)
+                        else
+                            -- Not slotted, label as "Assign"
+                            n = GetString(SI_BETTERUI_INV_ACTION_QUICKSLOT_ASSIGN)
+                        end
+                    elseif
+                        not isQuestItem
+                        and (ft == ITEMFILTERTYPE_WEAPONS or ft == ITEMFILTERTYPE_ARMOR or ft == ITEMFILTERTYPE_JEWELRY)
+                    then
+                        --switch compare
+                        n = GetString(SI_BETTERUI_INV_SWITCH_INFO)
+                    elseif isQuestItem and target.meetsUsageRequirement then
+                        -- Use
+                        n = GetString(SI_ITEM_ACTION_USE)
+                    else
+                        n = GetString(SI_ITEM_ACTION_LINK_TO_CHAT)
+                    end
+                elseif self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    --craftbag mode
+                    n = GetString(SI_ITEM_ACTION_LINK_TO_CHAT)
+                else
+                    n = ""
+                end
+                return n or ""
+            end,
+            keybind = KEYBINDS.SECONDARY or "UI_SHORTCUT_SECONDARY",
+            -- (no hold callbacks here; tap behavior preserved)
+            visible = function()
+                if self:IsBatchProcessing() then
+                    return false
+                end
+                if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    if self.itemList.selectedData then
+                        local isQuestItem = ZO_InventoryUtils_DoesNewItemMatchFilterType(
+                            self.itemList.selectedData,
+                            ITEMFILTERTYPE_QUEST
+                        )
+                        -- Show "A" if it's NOT a quest item OR if it IS a quest item that is usable
+                        if not isQuestItem then
+                            return true
+                        else
+                            return self.itemList.selectedData.meetsUsageRequirement
+                        end
+                    end
+                    return false
+                elseif self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    return true
+                end
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    return
+                end
+
+                if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    --bag mode
+                    local target = self.itemList.selectedData
+                    local ft = (target and target.bagId and target.slotIndex)
+                        and GetItemFilterTypeInfo(target.bagId, target.slotIndex)
+                        or nil
+                    if IsQuickslottable(target) then
+                        local hotbarCategory = HOTBAR_CATEGORY_QUICKSLOT_WHEEL
+                        local slotNum = nil
+
+                        if ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) then
+                            local questItemId
+                            if target.toolIndex then
+                                questItemId = GetQuestToolQuestItemId(target.questIndex, target.toolIndex)
+                            else
+                                questItemId = GetQuestConditionQuestItemId(target.questIndex, target.stepIndex,
+                                    target.conditionIndex)
+                            end
+                            slotNum = FindActionSlotMatchingSimpleAction(ACTION_TYPE_QUEST_ITEM, questItemId,
+                                hotbarCategory)
+                        else
+                            slotNum = FindActionSlotMatchingItem(target.bagId, target.slotIndex, hotbarCategory)
+                        end
+
+                        if slotNum then
+                            -- Quick Unassign: clear the slot securely without opening the wheel
+                            CallSecureProtected("ClearSlot", slotNum, hotbarCategory)
+                            if SOUNDS and PlaySound then
+                                PlaySound(SOUNDS.GAMEPAD_MENU_BACK)
+                            end
+                            -- Capture unique id to ensure we re-select the same item after the list rebuilds
+                            local preserveId = target and target.uniqueId
+
+                            -- Refresh the keybind label and list visual state (Delayed to allow native state to update)
+                            zo_callLater(function()
+                                if self.RefreshKeybinds and self.itemList then
+                                    if preserveId then
+                                        self._preserveUniqueId = preserveId
+                                    end
+                                    self:RefreshKeybinds()
+                                    self:RefreshItemList()
+                                end
+                            end, 100)
+                        else
+                            -- Not slotted, open the native quickslot wheel
+                            -- Must use zo_callLater to break the callstack
+                            zo_callLater(function() self:ShowQuickslot() end, 50)
+                        end
+                    else
+                        -- If it's gear categories, toggle compare; otherwise link to chat
+                        if
+                            not ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST)
+                            and (
+                                ft == ITEMFILTERTYPE_WEAPONS
+                                or ft == ITEMFILTERTYPE_ARMOR
+                                or ft == ITEMFILTERTYPE_JEWELRY
+                            )
+                        then
+                            self:SwitchInfo()
+                        elseif ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) and target.meetsUsageRequirement then
+                            -- Use the item (this handles scene transitions natively for books/maps)
+                            -- Access dataSource for quest-specific properties
+                            local ds = target.dataSource or target
+                            -- UseQuestTool and UseQuestItem are NOT protected functions - call directly
+                            -- Do NOT hide the scene — ESO handles scene transitions automatically
+                            if ds.toolIndex then
+                                UseQuestTool(ds.questIndex, ds.toolIndex)
+                            elseif ds.stepIndex and ds.conditionIndex then
+                                UseQuestItem(ds.questIndex, ds.stepIndex, ds.conditionIndex)
+                            else
+                                -- Fallback for items without tool/step info (shouldn't happen but safe)
+                                local bag, slot = ZO_Inventory_GetBagAndIndex(ds)
+                                if bag and slot then
+                                    CallSecureProtected("UseItem", bag, slot)
+                                end
+                            end
+                        else
+                            local itemLink = GetItemLink(target.bagId, target.slotIndex)
+                            if itemLink then
+                                ZO_LinkHandler_InsertLink(zo_strformat("[<<2>>]", SI_TOOLTIP_ITEM_NAME, itemLink))
+                            end
+                        end
+                    end
+                elseif self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    --craftbag mode
+                    local targetData = BETTERUI.Inventory.Utils.SafeGetTargetData(self.craftBagList)
+                    local itemLink
+                    local bag, slot = ZO_Inventory_GetBagAndIndex(targetData)
+                    if bag and slot then
+                        itemLink = GetItemLink(bag, slot)
+                    end
+                    if itemLink then
+                        ZO_LinkHandler_InsertLink(zo_strformat("[<<2>>]", SI_TOOLTIP_ITEM_NAME, itemLink))
+                    end
+                end
+            end,
+        },
+        -- Y Button for Actions or Batch Actions in selection mode
+        {
+            alignment = KEYBIND_STRIP_ALIGN_LEFT,
+            name = function()
+                if self:IsBatchProcessing() then
+                    return GetString(SI_BETTERUI_ABORT_ACTION)
+                end
+
+                -- Always show "Actions" - the selected count is now on the A button
+                return GetString(SI_GAMEPAD_INVENTORY_ACTION_LIST_KEYBIND)
+            end,
+            keybind = KEYBINDS.TERTIARY or "UI_SHORTCUT_TERTIARY",
+            visible = function()
+                if self:IsBatchProcessing() then
+                    return true
+                end
+
+                -- Check craftbag multi-select manager first
+                if self.craftBagMultiSelectManager and self.craftBagMultiSelectManager:IsActive() then
+                    return self.craftBagMultiSelectManager:HasSelections()
+                end
+                if self.multiSelectManager and self.multiSelectManager:IsActive() then
+                    return self.multiSelectManager:HasSelections()
+                end
+
+                return HasStableActionsTarget(self)
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    self:RequestBatchAbort()
+                    return
+                end
+
+                -- Check craftbag multi-select manager first
+                if self.craftBagMultiSelectManager and self.craftBagMultiSelectManager:IsActive() then
+                    self:ShowCraftBagBatchActionsMenu()
+                    return
+                end
+                if self.multiSelectManager and self.multiSelectManager:IsActive() then
+                    -- Show batch actions dialog
+                    self:ShowBatchActionsMenu()
+                else
+                    if not HasStableActionsTarget(self) then
+                        return
+                    end
+
+                    -- Normal Y menu
+                    self:SaveListPosition()
+                    self:ShowActions()
+                end
+            end,
+        },
+        -- L-Stick for Stacking Items (CIM Factory)
+        BETTERUI.CIM.Keybinds.CreateStackAllKeybind(
+            BAG_BACKPACK,
+            function()
+                return self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE
+                    and not self:IsBatchProcessing()
+            end
+        ),
+        --R Stick for Switching Bags
+        {
+            name = function()
+                local s = zo_strformat(
+                    GetString(SI_BETTERUI_INV_ACTION_TO_TEMPLATE),
+                    GetString(
+                        self:GetCurrentList() == self.craftBagList and SI_BETTERUI_INV_ACTION_INV
+                        or SI_BETTERUI_INV_ACTION_CB
+                    )
+                )
+                return s or ""
+            end,
+            alignment = KEYBIND_STRIP_ALIGN_RIGHT,
+            keybind = KEYBINDS.RIGHT_STICK or "UI_SHORTCUT_RIGHT_STICK",
+            disabledDuringSceneHiding = true,
+            visible = function()
+                return not self:IsBatchProcessing()
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    return
+                end
+                self:Switch()
+            end,
+        },
+        -- Quaternary for Clear Search (CIM Factory)
+        -- Only visible when search has text
+        BETTERUI.CIM.Keybinds.CreateClearSearchKeybind(
+            function()
+                if not (self.textSearchHeaderControl and (not self.textSearchHeaderControl:IsHidden())) then
+                    return
+                end
+                if self.ClearTextSearch then
+                    self:ClearTextSearch()
+                end
+                if self._searchModeActive then
+                    self:ExitSearchFocus()
+                else
+                    -- Skip if in header sort mode
+                    if not self.isInHeaderSortMode then
+                        self:RefreshKeybinds()
+                    end
+                end
+            end,
+            function()
+                return self.textSearchHeaderControl ~= nil
+            end,
+            function()
+                -- Only show Clear Search when there is actually text to clear
+                return self.searchQuery and self.searchQuery ~= ""
+            end
+        ),
+        -- Y-Hold (QUINARY) for Multi-Select Mode
+        -- Dedicated entry point for multi-select functionality
+        {
+            alignment = KEYBIND_STRIP_ALIGN_LEFT,
+            name = GetString(SI_BETTERUI_MULTI_SELECT),
+            keybind = KEYBINDS.QUINARY or "UI_SHORTCUT_QUINARY",
+            visible = function()
+                if self:IsBatchProcessing() then
+                    return false
+                end
+                -- Visible in item list mode with items
+                if self.actionMode == BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    -- Hide for quest category (quest items can't be batch-operated)
+                    local catData = self.categoryList and self.categoryList.selectedData
+                    if catData and catData.filterType == ITEMFILTERTYPE_QUEST then
+                        return false
+                    end
+                    return self.itemList and not self.itemList:IsEmpty()
+                        and self.multiSelectManager ~= nil
+                        and not self.multiSelectManager:IsActive()
+                end
+                -- Also visible in craftbag mode with items
+                if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    return self.craftBagList and not self.craftBagList:IsEmpty()
+                        and self.craftBagMultiSelectManager ~= nil
+                        and not self.craftBagMultiSelectManager:IsActive()
+                end
+                return false
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    return
+                end
+                -- Enter appropriate selection mode based on current list
+                if self.actionMode == BETTERUI.Inventory.CONST.CRAFT_BAG_ACTION_MODE then
+                    if self.craftBagMultiSelectManager and not self.craftBagMultiSelectManager:IsActive() then
+                        self:EnterCraftBagSelectionMode()
+                    end
+                elseif self.multiSelectManager and not self.multiSelectManager:IsActive() then
+                    self:EnterSelectionMode()
+                end
+            end,
+        },
+        -- Mark/Unmark Junk (remappable)
+        {
+            alignment = KEYBIND_STRIP_ALIGN_LEFT,
+            name = function()
+                local target = self.itemList and self.itemList.selectedData
+                if not target then
+                    return ""
+                end
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    return ""
+                end
+                local bagId, slotIndex = target.bagId, target.slotIndex
+                if not bagId or slotIndex == nil then
+                    return ""
+                end
+                if IsItemJunk(bagId, slotIndex) then
+                    return GetString(SI_BETTERUI_ACTION_UNMARK_AS_JUNK)
+                end
+                return GetString(SI_BETTERUI_ACTION_MARK_AS_JUNK)
+            end,
+            keybind = KEYBINDS.MARK_JUNK or "UI_SHORTCUT_QUATERNARY",
+            visible = function()
+                if self:IsBatchProcessing() then
+                    return false
+                end
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    return false
+                end
+                local target = self.itemList and self.itemList.selectedData
+                if not target then
+                    return false
+                end
+                if ZO_InventoryUtils_DoesNewItemMatchFilterType
+                    and ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) then
+                    return false
+                end
+                if target.bagId == BAG_VIRTUAL then
+                    return false
+                end
+                local companionJunkEnabled = BETTERUI.Settings.Modules["Inventory"].enableCompanionJunk == true
+                if not companionJunkEnabled and target.bagId and target.slotIndex
+                    and GetItemActorCategory(target.bagId, target.slotIndex) == GAMEPLAY_ACTOR_CATEGORY_COMPANION then
+                    return false
+                end
+                return true
+            end,
+            enabled = function()
+                local target = self.itemList and self.itemList.selectedData
+                if not target or not target.bagId or target.slotIndex == nil then
+                    return false
+                end
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    return false
+                end
+                if IsItemJunk(target.bagId, target.slotIndex) then
+                    return true
+                end
+                if IsItemPlayerLocked(target.bagId, target.slotIndex) then
+                    return false
+                end
+                return CanItemBeMarkedAsJunk(target.bagId, target.slotIndex)
+            end,
+            callback = function()
+                if self:IsBatchProcessing() then
+                    return
+                end
+                if self.actionMode ~= BETTERUI.Inventory.CONST.ITEM_LIST_ACTION_MODE then
+                    return
+                end
+                local target = self.itemList and self.itemList.selectedData
+                if not target or not target.bagId or target.slotIndex == nil then
+                    return
+                end
+                if ZO_InventoryUtils_DoesNewItemMatchFilterType
+                    and ZO_InventoryUtils_DoesNewItemMatchFilterType(target, ITEMFILTERTYPE_QUEST) then
+                    return
+                end
+                if target.bagId == BAG_VIRTUAL then
+                    return
+                end
+                local companionJunkEnabled = BETTERUI.Settings.Modules["Inventory"].enableCompanionJunk == true
+                if not companionJunkEnabled and GetItemActorCategory(target.bagId, target.slotIndex) == GAMEPLAY_ACTOR_CATEGORY_COMPANION then
+                    return
+                end
+
+                local setJunk = not IsItemJunk(target.bagId, target.slotIndex)
+                if setJunk then
+                    if IsItemPlayerLocked(target.bagId, target.slotIndex) then
+                        return
+                    end
+                    if not CanItemBeMarkedAsJunk(target.bagId, target.slotIndex) then
+                        return
+                    end
+                end
+
+                -- SetItemIsJunk is asynchronous; Inventory update handler will coalesce category refresh.
+                SetItemIsJunk(target.bagId, target.slotIndex, setJunk)
+
+                if GAMEPAD_INVENTORY and GAMEPAD_INVENTORY.InvalidateSlotDataCache then
+                    GAMEPAD_INVENTORY:InvalidateSlotDataCache()
+                end
+                if self and self.RefreshItemActions then
+                    self:RefreshItemActions()
+                end
+                if self and self.RefreshKeybinds and not self.isInHeaderSortMode then
+                    self:RefreshKeybinds()
+                end
+            end,
+        },
+    }
+
+    local leftTrigger, rightTrigger = BETTERUI.CIM.Keybinds.CreateListTriggerKeybinds(
+        function()
+            local currentList = self:GetCurrentList()
+            if currentList == self.itemList or currentList == self.craftBagList then
+                return currentList
+            end
+        end,
+        nil,
+        function() return BETTERUI.Inventory.GetSetting("triggerSpeed") end,
+        function() return BETTERUI.Inventory.GetSetting("useTriggersForSkip") end
+    )
+    table.insert(self.mainKeybindStripDescriptor, leftTrigger)
+    table.insert(self.mainKeybindStripDescriptor, rightTrigger)
+
+    table.insert(self.mainKeybindStripDescriptor, BETTERUI.CIM.Keybinds.CreateBackKeybind())
+end

@@ -1,0 +1,48 @@
+<Bindings>
+    <Layer name="SI_KEYBINDINGS_CATEGORY_ADDONS">
+        <Category name="SI_BINDING_NAME_BETTERUI_CATEGORY">
+            <Action name="BETTERUI_UI_PRIMARY">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_SECONDARY">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_TERTIARY">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_QUATERNARY">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_QUINARY">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_NEGATIVE">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_LEFT_SHOULDER">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_RIGHT_SHOULDER">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_LEFT_TRIGGER">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_RIGHT_TRIGGER">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_LEFT_STICK">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_RIGHT_STICK">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_DOWN">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+            <Action name="BETTERUI_UI_MARK_JUNK">
+                <Down>BETTERUI_EmptyKeybind()</Down>
+            </Action>
+        </Category>
+    </Layer>
+</Bindings>

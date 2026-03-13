@@ -1,0 +1,44 @@
+--[[
+File: Modules/CIM/ParametricScrollListTemplates.lua
+Purpose: Base definitions for BetterUI Scroll Lists.
+         Contains sound mappings and global constants used by list classes.
+Author: BetterUI Team
+Last Modified: 2026-01-26
+]]
+
+-- Tab bar movement types (extends ZO_PARAMETRIC_MOVEMENT_TYPES)
+ZO_TABBAR_MOVEMENT_TYPES =
+{
+    PAGE_FORWARD = ZO_PARAMETRIC_MOVEMENT_TYPES.LAST,
+    PAGE_BACK = ZO_PARAMETRIC_MOVEMENT_TYPES.LAST + 1,
+    PAGE_NAVIGATION_FAILED = ZO_PARAMETRIC_MOVEMENT_TYPES.LAST + 2
+}
+
+-- Sound mappings for list navigation
+ZO_PARAMETRIC_SCROLL_MOVEMENT_SOUNDS =
+{
+    [ZO_PARAMETRIC_MOVEMENT_TYPES.MOVE_NEXT] = SOUNDS.GAMEPAD_MENU_DOWN,
+    [ZO_PARAMETRIC_MOVEMENT_TYPES.MOVE_PREVIOUS] = SOUNDS.GAMEPAD_MENU_UP,
+    [ZO_PARAMETRIC_MOVEMENT_TYPES.JUMP_NEXT] = SOUNDS.GAMEPAD_MENU_JUMP_DOWN,
+    [ZO_PARAMETRIC_MOVEMENT_TYPES.JUMP_PREVIOUS] = SOUNDS.GAMEPAD_MENU_JUMP_UP,
+    [ZO_TABBAR_MOVEMENT_TYPES.PAGE_FORWARD] = SOUNDS.GAMEPAD_PAGE_FORWARD,
+    [ZO_TABBAR_MOVEMENT_TYPES.PAGE_BACK] = SOUNDS.GAMEPAD_PAGE_BACK,
+    [ZO_TABBAR_MOVEMENT_TYPES.PAGE_NAVIGATION_FAILED] = SOUNDS.GAMEPAD_PAGE_NAVIGATION_FAILED,
+}
+
+--[[
+Function: BETTERUI.GamepadParametricScrollListPlaySound
+Description: Plays navigation sound for scroll list movement.
+param: movementType (number) - The type of movement (next, prev, jump, etc.).
+]]
+function BETTERUI.GamepadParametricScrollListPlaySound(movementType)
+    PlaySound(ZO_PARAMETRIC_SCROLL_MOVEMENT_SOUNDS[movementType])
+end
+
+-- Scroll list orientation constants
+PARAMETRIC_SCROLL_LIST_VERTICAL = true
+PARAMETRIC_SCROLL_LIST_HORIZONTAL = false
+
+-- Global Gradient Constants
+BETTERUI_VERTICAL_PARAMETRIC_LIST_DEFAULT_FADE_GRADIENT_SIZE = 32
+BETTERUI_HORIZONTAL_PARAMETRIC_LIST_DEFAULT_FADE_GRADIENT_SIZE = 32
