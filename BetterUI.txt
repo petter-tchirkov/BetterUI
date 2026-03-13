@@ -11,10 +11,10 @@
 ; Core Initialization (Must load first)
 BetterUI.lua
 
-Bindings.xml
-
 lang\en.lua
 lang\$(language).lua
+
+Bindings.xml
 
 ; Module: Common Interface Module
 Modules\CIM\Constants.lua

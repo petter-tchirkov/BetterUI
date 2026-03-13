@@ -18,7 +18,6 @@ ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_LEFT_TRIGGER", "Left Trigger")
 ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_RIGHT_TRIGGER", "Right Trigger")
 ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_LEFT_STICK", "Left Stick")
 ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_RIGHT_STICK", "Right Stick")
-ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_DOWN", "Down")
 ZO_CreateStringId("SI_BINDING_NAME_BETTERUI_UI_MARK_JUNK", "Toggle Junk")
 
 -- UI Labels (Resource Orb Frames)

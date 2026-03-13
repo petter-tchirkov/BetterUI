@@ -22,6 +22,8 @@ local LAM = LibAddonMenu2
 
 if BETTERUI == nil then BETTERUI = {} end
 
+local ShouldRepairBindings
+
 -- ============================================================================
 -- NAMESPACE INITIALIZATION (Required before module files load)
 -- ============================================================================
@@ -122,13 +124,36 @@ function BETTERUI.EnsureDefaultBindings()
 	wrote = CopyDefaultBindingsIfUnbound(keybinds.RIGHT_TRIGGER, "UI_SHORTCUT_RIGHT_TRIGGER") or wrote
 	wrote = CopyDefaultBindingsIfUnbound(keybinds.LEFT_STICK, "UI_SHORTCUT_LEFT_STICK") or wrote
 	wrote = CopyDefaultBindingsIfUnbound(keybinds.RIGHT_STICK, "UI_SHORTCUT_RIGHT_STICK") or wrote
-	wrote = CopyDefaultBindingsIfUnbound(keybinds.DOWN, "UI_SHORTCUT_DOWN") or wrote
 
 	if wrote and SaveBindings then
 		SaveBindings()
 	end
 
 	return true
+end
+
+ShouldRepairBindings = function()
+	local keybinds = BETTERUI.CIM and BETTERUI.CIM.CONST and BETTERUI.CIM.CONST.KEYBINDS or nil
+	if not keybinds then
+		return false
+	end
+	if not GetNumActionBindings then
+		return false
+	end
+	local function Unbound(action)
+		local count = GetNumActionBindings(action)
+		return type(count) ~= "number" or count == 0
+	end
+	return Unbound(keybinds.PRIMARY)
+		or Unbound(keybinds.SECONDARY)
+		or Unbound(keybinds.TERTIARY)
+		or Unbound(keybinds.NEGATIVE)
+		or Unbound(keybinds.LEFT_SHOULDER)
+		or Unbound(keybinds.RIGHT_SHOULDER)
+		or Unbound(keybinds.LEFT_TRIGGER)
+		or Unbound(keybinds.RIGHT_TRIGGER)
+		or Unbound(keybinds.LEFT_STICK)
+		or Unbound(keybinds.RIGHT_STICK)
 end
 
 
@@ -470,6 +495,13 @@ function BETTERUI.LoadModules()
 		BETTERUI.CIM.RuntimeSetup.Apply(BETTERUI.Settings)
 	end
 
+	-- Initialize BetterUI keybind defaults once (only if unbound)
+	if BETTERUI.Settings and (not BETTERUI.Settings.bindingsInitialized or ShouldRepairBindings()) then
+		if BETTERUI.EnsureDefaultBindings and BETTERUI.EnsureDefaultBindings() then
+			BETTERUI.Settings.bindingsInitialized = true
+		end
+	end
+
 	-- Initialize research data once
 	BETTERUI.GetResearch()
 
@@ -537,13 +569,6 @@ function BETTERUI.Initialize(event, addon)
 		BETTERUI.Settings = BETTERUI.GlobalVars
 	else
 		BETTERUI.Settings = BETTERUI.SavedVars
-	end
-
-	-- Initialize BetterUI keybind defaults once (only if unbound)
-	if not BETTERUI.Settings.bindingsInitialized then
-		if BETTERUI.EnsureDefaultBindings and BETTERUI.EnsureDefaultBindings() then
-			BETTERUI.Settings.bindingsInitialized = true
-		end
 	end
 
 	-- Initialize or update module settings with defaults

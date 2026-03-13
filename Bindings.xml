@@ -1,5 +1,5 @@
 <Bindings>
-    <Layer name="SI_KEYBINDINGS_CATEGORY_ADDONS">
+    <Layer name="SI_KEYBINDINGS_CATEGORY_GENERAL">
         <Category name="SI_BINDING_NAME_BETTERUI_CATEGORY">
             <Action name="BETTERUI_UI_PRIMARY">
                 <Down>BETTERUI_EmptyKeybind()</Down>
@@ -35,9 +35,6 @@
                 <Down>BETTERUI_EmptyKeybind()</Down>
             </Action>
             <Action name="BETTERUI_UI_RIGHT_STICK">
-                <Down>BETTERUI_EmptyKeybind()</Down>
-            </Action>
-            <Action name="BETTERUI_UI_DOWN">
                 <Down>BETTERUI_EmptyKeybind()</Down>
             </Action>
             <Action name="BETTERUI_UI_MARK_JUNK">

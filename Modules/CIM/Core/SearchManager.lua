@@ -143,7 +143,6 @@ param: context (table) - The search context object (must have textSearchHeaderCo
 return: table - Array of keybind descriptors.
 ]]
 function BETTERUI.Interface.CreateSearchKeybindDescriptor(context)
-    local keybinds = BETTERUI.CIM.CONST and BETTERUI.CIM.CONST.KEYBINDS or nil
     local function HasVisibleSearchControl()
         if not context or not context.textSearchHeaderControl then return false end
         return not context.textSearchHeaderControl:IsHidden()
@@ -161,7 +160,7 @@ function BETTERUI.Interface.CreateSearchKeybindDescriptor(context)
                 return GetString(SI_GAMEPAD_SELECT_OPTION)
             end,
             alignment = KEYBIND_STRIP_ALIGN_LEFT,
-            keybind = keybinds and keybinds.PRIMARY or "UI_SHORTCUT_PRIMARY",
+            keybind = "UI_SHORTCUT_PRIMARY",
             disabledDuringSceneHiding = true,
             visible = function()
                 return HasVisibleSearchControl()
@@ -181,7 +180,7 @@ function BETTERUI.Interface.CreateSearchKeybindDescriptor(context)
                 return GetString(SI_GAMEPAD_BACK_OPTION)
             end,
             alignment = KEYBIND_STRIP_ALIGN_RIGHT,
-            keybind = keybinds and keybinds.NEGATIVE or "UI_SHORTCUT_NEGATIVE",
+            keybind = "UI_SHORTCUT_NEGATIVE",
             disabledDuringSceneHiding = true,
             visible = function()
                 return HasVisibleSearchControl()
@@ -204,7 +203,7 @@ function BETTERUI.Interface.CreateSearchKeybindDescriptor(context)
                 return GetString(SI_GAMEPAD_SCRIPTS_KEYBIND_DOWN) or "Down"
             end,
             alignment = KEYBIND_STRIP_ALIGN_LEFT,
-            keybind = keybinds and keybinds.DOWN or "UI_SHORTCUT_DOWN",
+            keybind = "UI_SHORTCUT_DOWN",
             disabledDuringSceneHiding = true,
             visible = function()
                 return HasVisibleSearchControl()
@@ -475,9 +474,7 @@ function BETTERUI.Interface.SearchMixin.SetupEditBoxHandlers(self, options)
         end
         if not isSceneShowing() then return end
 
-        local keybinds = BETTERUI.CIM.CONST and BETTERUI.CIM.CONST.KEYBINDS or nil
-        local downBind = keybinds and keybinds.DOWN or "UI_SHORTCUT_DOWN"
-        if command == downBind then
+        if command == "UI_SHORTCUT_DOWN" then
             onExitFocus(self)
             return true
         end
@@ -490,9 +487,7 @@ function BETTERUI.Interface.SearchMixin.SetupEditBoxHandlers(self, options)
             if handled then return handled end
             if not isSceneShowing() then return end
 
-            local keybinds = BETTERUI.CIM.CONST and BETTERUI.CIM.CONST.KEYBINDS or nil
-            local downBind = keybinds and keybinds.DOWN or "UI_SHORTCUT_DOWN"
-            if shortcut == downBind then
+            if shortcut == "UI_SHORTCUT_DOWN" then
                 onExitFocus(self)
                 return true
             end
